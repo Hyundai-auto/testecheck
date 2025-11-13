@@ -1,7 +1,7 @@
 {
-  "name": "checkout-governamental-payevo",
+  "name": "checkout-payevo",
   "version": "1.0.0",
-  "description": "Checkout governamental com integração Payevo API via proxy reverso",
+  "description": "integração Payevo API via proxy reverso",
   "main": "server.js",
   "type": "module",
   "scripts": {
@@ -14,7 +14,7 @@
     "pix",
     "payevo",
     "pagamento",
-    "governamental"
+    "aaa"
   ],
   "author": "",
   "license": "MIT",
