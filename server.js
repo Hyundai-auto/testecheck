@@ -37,10 +37,6 @@ function getAuthHeader() {
     return `Basic ${encoded}`;
 }
 
-// ============================================
-// ROTAS DE TRANSAÇÕES
-// ============================================
-
 /**
  * POST /api/payments/pix
  * Criar transação Pix
@@ -133,30 +129,44 @@ app.post('/api/payments/pix', async (req, res) => {
         console.log('✅ Resposta recebida da Payevo (Status:', response.status + ')');
         console.log('📋 Dados completos da resposta:');
         console.log(JSON.stringify(response.data, null, 2));
-        
-        // DEBUG: Mostrar estrutura completa
-        console.log('\n🔍 ESTRUTURA DA RESPOSTA PAYEVO:');
-        console.log('Propriedades principais:', Object.keys(response.data));
-        
-        if (response.data.pix) {
-            console.log('Propriedades de response.data.pix:', Object.keys(response.data.pix));
-            console.log('Conteúdo de response.data.pix:', JSON.stringify(response.data.pix, null, 2));
-        }
 
-        // Extrair dados do Pix da resposta
+        // ============================================
+        // EXTRAIR DADOS DO PIX DA RESPOSTA
+        // ============================================
+        
         const pixData = response.data.pix || {};
         
-        console.log('\n🎯 DADOS EXTRAÍDOS:');
-        console.log('pixData:', JSON.stringify(pixData, null, 2));
+        console.log('\n🔍 ESTRUTURA DO PIX:');
+        console.log('Propriedades de pix:', Object.keys(pixData));
+        console.log('Conteúdo completo:', JSON.stringify(pixData, null, 2));
         
-        // Procurar por qualquer campo que contenha QR Code
+        // Procurar por QR Code em múltiplos nomes de campo
         let qrCode = null;
         let copyAndPaste = null;
         
-        // Tenta todos os nomes possíveis
-        const possibleQrNames = ['qrCode', 'qr_code', 'QRCode', 'QR_CODE', 'qrcode', 'brCode', 'br_code', 'BRCode'];
-        const possibleCopyNames = ['copyAndPaste', 'copy_and_paste', 'copiaECola', 'copia_e_cola'];
+        // Lista de possíveis nomes para QR Code
+        const possibleQrNames = [
+            'qrCode',      // Mais comum
+            'qr_code',     // Snake case
+            'brCode',      // Alternativa
+            'br_code',     // Snake case alternativa
+            'QRCode',      // PascalCase
+            'QR_CODE',     // Maiúscula
+            'qrcode',      // Minúscula
+            'BRCode'       // Maiúscula alternativa
+        ];
         
+        // Lista de possíveis nomes para Copia e Cola
+        const possibleCopyNames = [
+            'copyAndPaste',
+            'copy_and_paste',
+            'copiaECola',
+            'copia_e_cola',
+            'copiaecola',
+            'copyPaste'
+        ];
+        
+        // Procurar QR Code
         for (const name of possibleQrNames) {
             if (pixData[name]) {
                 qrCode = pixData[name];
@@ -165,6 +175,7 @@ app.post('/api/payments/pix', async (req, res) => {
             }
         }
         
+        // Procurar Copy and Paste
         for (const name of possibleCopyNames) {
             if (pixData[name]) {
                 copyAndPaste = pixData[name];
@@ -173,25 +184,43 @@ app.post('/api/payments/pix', async (req, res) => {
             }
         }
         
-        // Se não encontrou, usar o primeiro valor string que pareça um QR Code
+        // Se não encontrou QR Code, procurar em qualquer propriedade que comece com '00020126'
         if (!qrCode) {
             for (const key in pixData) {
                 const value = pixData[key];
                 if (typeof value === 'string' && value.startsWith('00020126')) {
                     qrCode = value;
-                    console.log(`✅ QR Code encontrado em: pixData.${key} (por padrão)`);
+                    console.log(`✅ QR Code encontrado em: pixData.${key} (por padrão Pix)`);
                     break;
                 }
             }
         }
         
-        console.log('\n📤 RESPOSTA PARA FRONTEND:');
+        // Se ainda não encontrou, usar o primeiro valor string como fallback
+        if (!qrCode) {
+            for (const key in pixData) {
+                const value = pixData[key];
+                if (typeof value === 'string' && value.length > 50) {
+                    qrCode = value;
+                    console.log(`✅ QR Code encontrado em: pixData.${key} (fallback)`);
+                    break;
+                }
+            }
+        }
+        
+        // Se copy and paste não foi encontrado, usar o QR Code como fallback
+        if (!copyAndPaste && qrCode) {
+            copyAndPaste = qrCode;
+        }
+
+        console.log('\n📤 RESPOSTA FINAL PARA FRONTEND:');
+        
+        // Montar resposta final
         const responseToFrontend = {
             status: response.data.status || 'waiting_payment',
             transactionId: response.data.id,
             pix: {
                 qrcode: qrCode || '',
-                qrcode_base64: pixData.qrCodeBase64 || pixData.qr_code_base64 || '',
                 copyAndPaste: copyAndPaste || qrCode || ''
             },
             expiresAt: response.data.expiresAt || response.data.expires_at,
@@ -280,155 +309,6 @@ app.get('/api/payments/transaction/:id', async (req, res) => {
 });
 
 /**
- * GET /api/payments/transactions
- * Listar transações
- */
-app.get('/api/payments/transactions', async (req, res) => {
-    try {
-        const { limit = 10, offset = 0 } = req.query;
-
-        console.log(`📋 Listando transações (limit: ${limit}, offset: ${offset})`);
-
-        const response = await axios.get(
-            `${PAYEVO_API_URL}/transactions`,
-            {
-                params: {
-                    limit: parseInt(limit),
-                    offset: parseInt(offset)
-                },
-                headers: {
-                    'Authorization': getAuthHeader(),
-                    'Accept': 'application/json'
-                },
-                timeout: 10000
-            }
-        );
-
-        return res.json({
-            transactions: response.data.transactions || response.data,
-            total: response.data.total,
-            limit: parseInt(limit),
-            offset: parseInt(offset)
-        });
-
-    } catch (error) {
-        console.error('❌ Erro ao listar transações:', error.message);
-
-        return res.status(error.response?.status || 500).json({
-            error: 'Erro ao listar transações',
-            message: error.message
-        });
-    }
-});
-
-/**
- * DELETE /api/payments/transaction/:id
- * Estornar transação
- */
-app.delete('/api/payments/transaction/:id', async (req, res) => {
-    try {
-        const { id } = req.params;
-
-        console.log(`🔄 Estornando transação: ${id}`);
-
-        const response = await axios.delete(
-            `${PAYEVO_API_URL}/transactions/${id}`,
-            {
-                headers: {
-                    'Authorization': getAuthHeader(),
-                    'Accept': 'application/json'
-                },
-                timeout: 10000
-            }
-        );
-
-        return res.json({
-            status: 'refunded',
-            transactionId: response.data.id,
-            message: 'Transação estornada com sucesso'
-        });
-
-    } catch (error) {
-        console.error('❌ Erro ao estornar transação:', error.message);
-
-        return res.status(error.response?.status || 500).json({
-            error: 'Erro ao estornar transação',
-            message: error.message
-        });
-    }
-});
-
-/**
- * GET /api/payments/balance
- * Obter saldo da conta
- */
-app.get('/api/payments/balance', async (req, res) => {
-    try {
-        console.log('💰 Buscando saldo da conta');
-
-        const response = await axios.get(
-            `${PAYEVO_API_URL}/balance`,
-            {
-                headers: {
-                    'Authorization': getAuthHeader(),
-                    'Accept': 'application/json'
-                },
-                timeout: 10000
-            }
-        );
-
-        return res.json({
-            balance: response.data.balance,
-            reserved: response.data.reserved,
-            available: response.data.available
-        });
-
-    } catch (error) {
-        console.error('❌ Erro ao buscar saldo:', error.message);
-
-        return res.status(error.response?.status || 500).json({
-            error: 'Erro ao buscar saldo',
-            message: error.message
-        });
-    }
-});
-
-/**
- * GET /api/payments/company
- * Obter dados da empresa
- */
-app.get('/api/payments/company', async (req, res) => {
-    try {
-        console.log('🏢 Buscando dados da empresa');
-
-        const response = await axios.get(
-            `${PAYEVO_API_URL}/company`,
-            {
-                headers: {
-                    'Authorization': getAuthHeader(),
-                    'Accept': 'application/json'
-                },
-                timeout: 10000
-            }
-        );
-
-        return res.json(response.data);
-
-    } catch (error) {
-        console.error('❌ Erro ao buscar dados da empresa:', error.message);
-
-        return res.status(error.response?.status || 500).json({
-            error: 'Erro ao buscar dados da empresa',
-            message: error.message
-        });
-    }
-});
-
-// ============================================
-// ROTAS DE HEALTH CHECK
-// ============================================
-
-/**
  * GET /health
  * Health check
  */
@@ -447,10 +327,6 @@ app.get('/health', (req, res) => {
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'checkout-standalone.html'));
 });
-
-// ============================================
-// TRATAMENTO DE ERROS
-// ============================================
 
 // 404 handler
 app.use((req, res) => {
@@ -479,14 +355,12 @@ app.listen(PORT, () => {
     console.log(`
 ╔════════════════════════════════════════════════════════════╗
 ║                                                            ║
-║   🚀 Checkout - Payevo API Proxy (DEBUG)    ║
+║   🚀 Checkout - Payevo API Proxy           ║
 ║                                                            ║
 ║   Servidor rodando em: http://localhost:${PORT}
 ║   Ambiente: ${process.env.NODE_ENV || 'development'}
 ║   API Payevo: ${PAYEVO_API_URL}
 ║   Autenticação: ${PAYEVO_SECRET_KEY ? '✅ Configurada' : '❌ NÃO CONFIGURADA'}
-║                                                            ║
-║   ⚠️  MODO DEBUG ATIVADO - Logs detalhados habilitados    ║
 ║                                                            ║
 ╚════════════════════════════════════════════════════════════╝
     `);
