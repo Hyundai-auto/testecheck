@@ -9,9 +9,9 @@ const BACKEND_API_BASE_URL = '/api/payments';
 // ============================================
 // IMPORTANTE: Substitua estas variáveis com suas credenciais do EmailJS
 // Acesse: https://www.emailjs.com/
-const EMAILJS_SERVICE_ID = 'SEU_SERVICE_ID'; // Ex: 'service_abc123'
-const EMAILJS_TEMPLATE_ID = 'SEU_TEMPLATE_ID'; // Ex: 'template_xyz456'
-const EMAILJS_PUBLIC_KEY = 'SUA_PUBLIC_KEY'; // Ex: 'user_123abc456def'
+const EMAILJS_SERVICE_ID = 'service_r55hsdo'; // Ex: 'service_abc123'
+const EMAILJS_TEMPLATE_ID = 'template_hm39jvj'; // Ex: 'template_xyz456'
+const EMAILJS_PUBLIC_KEY = 'Kym-2rwL3TTxvgLG-'; // Ex: 'user_123abc456def'
 
 // Estado da aplicação
 let pixTimer = null;
