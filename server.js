@@ -11,8 +11,7 @@ app.use(express.json());
 
 app.post('/api/payments/pix', async (req, res) => {
   try {
-    const response = await fetch('https://apiv2.payevo.com.br/functions/v1/transactions
-', {
+    const response = await fetch('https://apiv2.payevo.com.br/functions/v1/transactions', {
   method: 'POST',
   headers: {
     'Content-Type': 'application/json',
