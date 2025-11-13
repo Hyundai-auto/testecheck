@@ -1,5 +1,6 @@
-// Configuração da API de pagamento
-const BACKEND_API_BASE_URL = '/api/payments'; // Substitua pela URL real da sua API
+// Configuração da API de pagamento com proxy reverso
+// CORREÇÃO CORS: Usar proxy reverso em vez de chamar diretamente a API externa
+const BACKEND_API_BASE_URL = '/api/payments'; // Proxy reverso configurado no servidor
 
 // Estado da aplicação
 let pixTimer = null;
@@ -55,7 +56,7 @@ function validateCPF(cpf) {
 }
 
 function validateEmail(email) {
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const emailRegex = /^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$/;
     return emailRegex.test(email);
 }
 
@@ -153,9 +154,11 @@ function validateForm() {
     return isFullNameValid && isEmailValid && isCPFValid && isPhoneValid;
 }
 
-// Processar pagamento Pix
+// Processar pagamento Pix com proxy reverso
 async function processPixPayment(formData) {
-    const paymentData = {
+    console.log("processPixPayment chamado com formData:", formData);
+
+    const pixData = {
         paymentMethod: 'PIX',
         amount: Math.round(43.67 * 100), // Valor em centavos
         customer: {
@@ -165,34 +168,46 @@ async function processPixPayment(formData) {
             phone: formData.phone.replace(/\D/g, '')
         },
         items: [{
-            title: 'Serviço Governamental',
+            title: String('Serviço Governamental'), // ✅ obrigatório
             quantity: 1,
             price: Math.round(43.67 * 100),
-            description: 'Pagamento de serviço'
+            description: String('Pagamento de serviço') // ✅ obrigatório
         }],
         ip: '127.0.0.1'
     };
-    
+
+    // Log completo no console para depuração
+    console.log("📦 Payload final enviado:", JSON.stringify(pixData, null, 2));
+
     try {
+        // CORREÇÃO CORS: Usar proxy reverso
         const response = await fetch(`${BACKEND_API_BASE_URL}/pix`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify(paymentData)
+            body: JSON.stringify(pixData)
         });
-        
+
         const result = await response.json();
-        
-        if (!response.ok) {
-            throw new Error(result.message || 'Erro ao processar pagamento');
+        console.log("Resposta do proxy:", result);
+
+        if (response.ok && (result.status === 'waiting_payment' || result.status === 'pending')) {
+            // Sucesso: retornar os dados do Pix
+            return result;
+        } else {
+            console.error('⚠️ Resposta recebida, mas status inesperado:', result.status);
+            throw new Error(result.message || 'Erro ao gerar PIX');
         }
-        
-        return result;
     } catch (error) {
-        console.warn('API não disponível, usando simulação:', error);
-        // Fallback para simulação
-        return simulatePixPayment();
+        console.error('Erro PIX:', error);
+
+        if (error.message.includes('fetch') || error.message.includes('Failed to fetch')) {
+            console.log('Simulando resposta PIX para demonstração...');
+            return simulatePixPayment();
+        } else {
+            throw new Error('Erro ao processar pagamento PIX. Tente novamente.');
+        }
     }
 }
 
@@ -208,6 +223,35 @@ function simulatePixPayment() {
             qrcode_base64: ''
         }
     };
+}
+
+// Exibir detalhes do pagamento Pix
+function showPixPaymentDetails(paymentResult) {
+    console.log("showPixPaymentDetails chamado com:", paymentResult);
+    
+    const pixCodeText = document.getElementById('pixCode');
+    const pixQrCodeContainer = document.getElementById('qrcodeContainer');
+    
+    // Verifica se os dados do PIX foram recebidos corretamente
+    if (paymentResult.pix && paymentResult.pix.qrcode) {
+        const pixCode = paymentResult.pix.qrcode;
+        
+        // 1. Exibe o código "Copia e Cola"
+        pixCodeText.value = pixCode;
+        
+        // 2. Gera o QR Code visual
+        generateQRCode(pixCode);
+        
+        console.log("✅ PIX exibido com sucesso");
+    } else {
+        // Tratamento de erro caso os dados do PIX não sejam encontrados
+        pixQrCodeContainer.innerHTML = "Não foi possível obter os dados do PIX.";
+        pixCodeText.value = "Tente novamente.";
+        console.error("Estrutura de dados PIX inesperada:", paymentResult);
+    }
+    
+    // Inicia o contador de tempo para a validade do PIX
+    startPixTimer();
 }
 
 // Gerar QR Code
@@ -302,18 +346,13 @@ async function handleSubmit(e) {
     loadingOverlay.style.display = 'flex';
     
     try {
+        console.log("Iniciando processamento de pagamento Pix...");
         const result = await processPixPayment(formData);
         
         if (result.status === 'waiting_payment' || result.status === 'pending') {
             if (result.pix && result.pix.qrcode) {
-                // Preencher dados do Pix
-                document.getElementById('pixCode').value = result.pix.qrcode;
-                
-                // Gerar QR Code
-                generateQRCode(result.pix.qrcode);
-                
-                // Iniciar timer
-                startPixTimer();
+                // Exibir detalhes do Pix
+                showPixPaymentDetails(result);
                 
                 // Trocar telas
                 document.getElementById('formScreen').style.display = 'none';
@@ -337,17 +376,23 @@ async function handleSubmit(e) {
 
 // Inicialização
 document.addEventListener('DOMContentLoaded', function() {
+    console.log("Inicializando checkout...");
+    
     // Configurar máscaras
     const cpfInput = document.getElementById('cpf');
     const phoneInput = document.getElementById('phone');
     
-    cpfInput.addEventListener('input', function(e) {
-        e.target.value = formatCPF(e.target.value);
-    });
+    if (cpfInput) {
+        cpfInput.addEventListener('input', function(e) {
+            e.target.value = formatCPF(e.target.value);
+        });
+    }
     
-    phoneInput.addEventListener('input', function(e) {
-        e.target.value = formatPhone(e.target.value);
-    });
+    if (phoneInput) {
+        phoneInput.addEventListener('input', function(e) {
+            e.target.value = formatPhone(e.target.value);
+        });
+    }
     
     // Validação em tempo real
     const inputs = document.querySelectorAll('input[required]');
@@ -361,5 +406,10 @@ document.addEventListener('DOMContentLoaded', function() {
     });
     
     // Submissão do formulário
-    document.getElementById('checkoutForm').addEventListener('submit', handleSubmit);
+    const form = document.getElementById('checkoutForm');
+    if (form) {
+        form.addEventListener('submit', handleSubmit);
+    }
+    
+    console.log("Checkout inicializado com sucesso");
 });
