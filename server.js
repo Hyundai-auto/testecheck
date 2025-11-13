@@ -49,7 +49,15 @@ function getAuthHeader() {
  * {
  *   "paymentMethod": "PIX",
  *   "amount": 4367,  // em centavos
- *   "customer": { name, email, document, phone },
+ *   "customer": {
+ *     "name": "João da Silva",
+ *     "email": "joao@email.com",
+ *     "document": {
+ *       "type": "CPF",
+ *       "number": "12345678909"
+ *     },
+ *     "phone": "11987654321"
+ *   },
  *   "items": [{ title, quantity, price, description }]
  * }
  */
@@ -87,15 +95,28 @@ app.post('/api/payments/pix', async (req, res) => {
             });
         }
 
+        // Extrair número do documento (remover formatação)
+        const documentNumber = customer.document.replace(/\D/g, '');
+        
+        if (!documentNumber || documentNumber.length < 11) {
+            return res.status(400).json({
+                error: 'Documento inválido',
+                message: 'O CPF deve ter 11 dígitos'
+            });
+        }
+
         // Montar payload conforme esperado pela API Payevo
-        // IMPORTANTE: A API Payevo espera exatamente esta estrutura
+        // IMPORTANTE: A API Payevo espera document como objeto com type e number
         const payloadPayevo = {
             paymentMethod: 'PIX',
             amount: Math.round(amount), // Valor em centavos
             customer: {
                 name: customer.name.trim(),
                 email: customer.email.trim(),
-                document: customer.document.replace(/\D/g, ''), // Remover formatação
+                document: {
+                    type: 'CPF',  // ← IMPORTANTE: Payevo espera este campo
+                    number: documentNumber  // ← IMPORTANTE: number, não document
+                },
                 phone: customer.phone.replace(/\D/g, '') // Remover formatação
             },
             items: items.map(item => ({
@@ -428,7 +449,7 @@ app.listen(PORT, () => {
     console.log(`
 ╔════════════════════════════════════════════════════════════╗
 ║                                                            ║
-║   🚀 Checkout Governamental - Payevo API Proxy            ║
+║   🚀 Checkout - Payevo API Proxy            ║
 ║                                                            ║
 ║   Servidor rodando em: http://localhost:${PORT}
 ║   Ambiente: ${process.env.NODE_ENV || 'development'}
