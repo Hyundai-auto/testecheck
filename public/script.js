@@ -1,12 +1,17 @@
-// Configuração da API de pagamento com proxy reverso
+// ============================================
+// CONFIGURAÇÃO DA API
+// ============================================
+
 const BACKEND_API_BASE_URL = '/api/payments';
 
 // Estado da aplicação
 let pixTimer = null;
 let timeRemaining = 900; // 15 minutos em segundos
-let currentTransactionId = null;
 
-// Máscaras de formatação
+// ============================================
+// MÁSCARAS DE FORMATAÇÃO
+// ============================================
+
 function formatCPF(value) {
     return value
         .replace(/\D/g, '')
@@ -24,7 +29,10 @@ function formatPhone(value) {
         .slice(0, 15);
 }
 
-// Validações
+// ============================================
+// VALIDAÇÕES
+// ============================================
+
 function validateCPF(cpf) {
     const cleanCPF = cpf.replace(/\D/g, '');
     if (cleanCPF.length !== 11) return false;
@@ -68,7 +76,10 @@ function validateFullName(name) {
     return name.trim().split(' ').length >= 2;
 }
 
-// Toast notifications
+// ============================================
+// NOTIFICAÇÕES TOAST
+// ============================================
+
 function showToast(message, type = 'success') {
     const toast = document.getElementById('toast');
     toast.textContent = message;
@@ -80,7 +91,10 @@ function showToast(message, type = 'success') {
     }, 3000);
 }
 
-// Validação de campo individual
+// ============================================
+// VALIDAÇÃO DE CAMPOS
+// ============================================
+
 function validateField(input) {
     const field = input.id;
     const value = input.value;
@@ -138,7 +152,6 @@ function validateField(input) {
     return isValid;
 }
 
-// Validação do formulário completo
 function validateForm() {
     const fullName = document.getElementById('fullName');
     const email = document.getElementById('email');
@@ -153,87 +166,114 @@ function validateForm() {
     return isFullNameValid && isEmailValid && isCPFValid && isPhoneValid;
 }
 
-/**
- * Extrair QR Code da resposta da Payevo
- * A resposta pode vir em diferentes formatos
- */
+// ============================================
+// EXTRAÇÃO DE DADOS DO PIX
+// ============================================
+
 function extractPixData(response) {
-    console.log('🔍 Analisando resposta da Payevo:', JSON.stringify(response, null, 2));
+    console.log('🔍 Analisando resposta da Payevo');
+    console.log('Estrutura da resposta:', Object.keys(response));
     
-    // Tentar diferentes caminhos possíveis para o QR Code
+    if (!response.pix) {
+        console.error('❌ Propriedade "pix" não encontrada na resposta');
+        return null;
+    }
+    
+    const pixData = response.pix;
+    console.log('Propriedades de pix:', Object.keys(pixData));
+    console.log('Conteúdo completo de pix:', JSON.stringify(pixData, null, 2));
+    
     let qrCode = null;
     let copyAndPaste = null;
     
-    // Caminho 1: response.pix.qrCode
-    if (response.pix && response.pix.qrCode) {
-        qrCode = response.pix.qrCode;
-        copyAndPaste = response.pix.copyAndPaste || response.pix.qrCode;
+    // Lista de possíveis nomes para QR Code
+    const possibleQrNames = [
+        'qrcode',       // Mais comum (minúscula)
+        'qrCode',       // camelCase
+        'qr_code',      // snake_case
+        'brCode',       // Alternativa
+        'br_code',      // snake_case alternativa
+        'QRCode',       // PascalCase
+        'QR_CODE',      // MAIÚSCULA
+        'BRCode'        // MAIÚSCULA alternativa
+    ];
+    
+    // Lista de possíveis nomes para Copia e Cola
+    const possibleCopyNames = [
+        'copyAndPaste',
+        'copy_and_paste',
+        'copiaECola',
+        'copia_e_cola',
+        'copiaecola',
+        'copyPaste'
+    ];
+    
+    // Procurar QR Code
+    for (const name of possibleQrNames) {
+        if (pixData[name]) {
+            qrCode = pixData[name];
+            console.log(`✅ QR Code encontrado em: pix.${name}`);
+            break;
+        }
     }
-    // Caminho 2: response.pix.qr_code
-    else if (response.pix && response.pix.qr_code) {
-        qrCode = response.pix.qr_code;
-        copyAndPaste = response.pix.copy_and_paste || response.pix.qr_code;
+    
+    // Procurar Copy and Paste
+    for (const name of possibleCopyNames) {
+        if (pixData[name]) {
+            copyAndPaste = pixData[name];
+            console.log(`✅ Copy and Paste encontrado em: pix.${name}`);
+            break;
+        }
     }
-    // Caminho 3: response.qrCode (sem nesting)
-    else if (response.qrCode) {
-        qrCode = response.qrCode;
-        copyAndPaste = response.copyAndPaste || response.qrCode;
-    }
-    // Caminho 4: response.qr_code (sem nesting)
-    else if (response.qr_code) {
-        qrCode = response.qr_code;
-        copyAndPaste = response.copy_and_paste || response.qr_code;
-    }
-    // Caminho 5: Procurar em qualquer propriedade que contenha 'qr' ou 'pix'
-    else {
-        for (const key in response) {
-            if (key.toLowerCase().includes('qr') || key.toLowerCase().includes('pix')) {
-                const value = response[key];
-                if (typeof value === 'object') {
-                    // Se for objeto, procurar por qrCode dentro
-                    if (value.qrCode) {
-                        qrCode = value.qrCode;
-                        copyAndPaste = value.copyAndPaste || value.qrCode;
-                        break;
-                    }
-                    if (value.qr_code) {
-                        qrCode = value.qr_code;
-                        copyAndPaste = value.copy_and_paste || value.qr_code;
-                        break;
-                    }
-                } else if (typeof value === 'string' && value.startsWith('00020126')) {
-                    // Se for string e parecer um QR Code Pix
-                    qrCode = value;
-                    copyAndPaste = value;
-                    break;
-                }
+    
+    // Se não encontrou QR Code, procurar em qualquer propriedade que comece com '00020126'
+    if (!qrCode) {
+        for (const key in pixData) {
+            const value = pixData[key];
+            if (typeof value === 'string' && value.startsWith('00020126')) {
+                qrCode = value;
+                console.log(`✅ QR Code encontrado em: pix.${key} (por padrão Pix)`);
+                break;
             }
         }
     }
     
-    if (qrCode) {
-        console.log('✅ QR Code encontrado:', qrCode.substring(0, 50) + '...');
-        return {
-            qrcode: qrCode,
-            copyAndPaste: copyAndPaste || qrCode
-        };
+    // Se ainda não encontrou, usar o primeiro valor string como fallback
+    if (!qrCode) {
+        for (const key in pixData) {
+            const value = pixData[key];
+            if (typeof value === 'string' && value.length > 50) {
+                qrCode = value;
+                console.log(`✅ QR Code encontrado em: pix.${key} (fallback)`);
+                break;
+            }
+        }
     }
     
-    console.error('❌ QR Code não encontrado na resposta');
-    console.error('Estrutura da resposta:', Object.keys(response));
-    return null;
+    // Se copy and paste não foi encontrado, usar o QR Code como fallback
+    if (!copyAndPaste && qrCode) {
+        copyAndPaste = qrCode;
+    }
+    
+    if (!qrCode) {
+        console.error('❌ QR Code não encontrado em nenhuma propriedade');
+        console.error('Propriedades disponíveis:', Object.keys(pixData));
+        return null;
+    }
+    
+    return { qrCode, copyAndPaste };
 }
 
-/**
- * Processar pagamento Pix com Payevo API via proxy reverso
- */
+// ============================================
+// PROCESSAR PAGAMENTO PIX
+// ============================================
+
 async function processPixPayment(formData) {
-    console.log("🔄 Iniciando processamento de pagamento Pix");
-    console.log("Dados do formulário:", formData);
+    console.log('📦 Processando pagamento Pix com formData:', formData);
 
     const pixData = {
         paymentMethod: 'PIX',
-        amount: Math.round(43.67 * 100), // Valor em centavos (4367 = R$ 43,67)
+        amount: Math.round(43.67 * 100), // Valor em centavos
         customer: {
             name: formData.fullName,
             email: formData.email,
@@ -244,12 +284,12 @@ async function processPixPayment(formData) {
             title: 'Checkout',
             quantity: 1,
             price: Math.round(43.67 * 100),
-            description: 'Checkout'
+            description: 'Pagamento de serviço'
         }],
         ip: '127.0.0.1'
     };
 
-    console.log("📦 Payload enviado para proxy reverso:", JSON.stringify(pixData, null, 2));
+    console.log('📤 Payload enviado:', JSON.stringify(pixData, null, 2));
 
     try {
         const response = await fetch(`${BACKEND_API_BASE_URL}/pix`, {
@@ -261,71 +301,77 @@ async function processPixPayment(formData) {
         });
 
         const result = await response.json();
-        console.log("📥 Resposta completa do proxy reverso:", JSON.stringify(result, null, 2));
+        console.log('📥 Resposta recebida:', JSON.stringify(result, null, 2));
 
-        if (response.ok) {
-            // Tentar extrair dados do Pix
-            const pixInfo = extractPixData(result);
-            
-            if (pixInfo && pixInfo.qrcode) {
-                currentTransactionId = result.transactionId || result.id;
-                console.log("✅ Transação criada com sucesso. ID:", currentTransactionId);
-                
-                // Retornar dados formatados
-                return {
-                    status: result.status || 'waiting_payment',
-                    transactionId: currentTransactionId,
-                    pix: {
-                        qrcode: pixInfo.qrcode,
-                        copyAndPaste: pixInfo.copyAndPaste
-                    },
-                    amount: result.amount || 4367
-                };
-            } else {
-                console.error('⚠️ QR Code não encontrado na resposta');
-                throw new Error('QR Code não retornado pela API');
-            }
-        } else {
-            console.error('⚠️ Resposta com erro:', result);
-            throw new Error(result.error || result.message || 'Erro ao gerar PIX');
+        if (!response.ok) {
+            console.error('❌ Erro HTTP:', response.status);
+            console.error('Detalhes do erro:', result);
+            throw new Error(result.message || `Erro HTTP ${response.status}`);
         }
+
+        // Extrair dados do PIX
+        const pixInfo = extractPixData(result);
+        
+        if (!pixInfo) {
+            console.error('❌ Não foi possível extrair dados do PIX');
+            throw new Error('QR Code não retornado pela API');
+        }
+
+        console.log('✅ Dados do PIX extraídos com sucesso');
+        
+        return {
+            status: result.status,
+            transactionId: result.transactionId,
+            pix: {
+                qrcode: pixInfo.qrCode,
+                copyAndPaste: pixInfo.copyAndPaste
+            },
+            amount: result.amount
+        };
+
     } catch (error) {
-        console.error('❌ Erro ao processar pagamento Pix:', error);
+        console.error('❌ Erro ao processar pagamento Pix:', error.message);
         throw new Error('Erro ao processar pagamento. Tente novamente.');
     }
 }
 
-/**
- * Buscar status da transação
- */
-async function checkTransactionStatus() {
-    if (!currentTransactionId) {
-        console.warn('Nenhuma transação ativa');
-        return null;
-    }
+// ============================================
+// GERAR QR CODE
+// ============================================
 
+function generateQRCode(pixCode) {
+    const container = document.getElementById('qrcodeContainer');
+    container.innerHTML = '';
+    
     try {
-        console.log(`🔍 Verificando status da transação: ${currentTransactionId}`);
-
-        const response = await fetch(`${BACKEND_API_BASE_URL}/transaction/${currentTransactionId}`, {
-            method: 'GET',
-            headers: {
-                'Content-Type': 'application/json',
+        QRCode.toCanvas(pixCode, {
+            width: 256,
+            margin: 2,
+            color: {
+                dark: '#000000',
+                light: '#FFFFFF'
+            }
+        }, function (error, canvas) {
+            if (error) {
+                console.error('❌ Erro ao gerar QR Code:', error);
+                container.innerHTML = '<p style="color: red;">Erro ao gerar QR Code</p>';
+            } else {
+                console.log('✅ QR Code gerado com sucesso');
+                container.appendChild(canvas);
             }
         });
-
-        const result = await response.json();
-        console.log("Status da transação:", result.status);
-        return result;
     } catch (error) {
-        console.error('Erro ao verificar status:', error);
-        return null;
+        console.error('❌ Erro ao gerar QR Code:', error);
+        container.innerHTML = '<p style="color: red;">Erro ao gerar QR Code</p>';
     }
 }
 
-// Exibir detalhes do pagamento Pix
+// ============================================
+// EXIBIR DETALHES DO PAGAMENTO PIX
+// ============================================
+
 function showPixPaymentDetails(paymentResult) {
-    console.log("📊 Exibindo detalhes do pagamento Pix");
+    console.log('📋 Exibindo detalhes do pagamento Pix');
     
     const pixCodeText = document.getElementById('pixCode');
     const pixQrCodeContainer = document.getElementById('qrcodeContainer');
@@ -333,62 +379,29 @@ function showPixPaymentDetails(paymentResult) {
     if (paymentResult.pix && paymentResult.pix.qrcode) {
         const pixCode = paymentResult.pix.qrcode;
         
-        // 1. Exibe o código "Copia e Cola"
+        // Exibir código Pix
         pixCodeText.value = pixCode;
-        console.log("✅ Código Pix copia e cola exibido");
         
-        // 2. Gera o QR Code visual
+        // Gerar QR Code visual
         generateQRCode(pixCode);
-        console.log("✅ QR Code gerado");
         
-        // 3. Exibir informações adicionais se disponíveis
-        if (paymentResult.amount) {
-            const amountElement = document.querySelector('.pix-amount');
-            if (amountElement) {
-                amountElement.textContent = `R$ ${(paymentResult.amount / 100).toFixed(2).replace('.', ',')}`;
-            }
-        }
+        console.log('✅ Checkout concluído com sucesso');
     } else {
-        pixQrCodeContainer.innerHTML = "Não foi possível obter os dados do PIX.";
-        pixCodeText.value = "Tente novamente.";
-        console.error("Estrutura de dados PIX inesperada:", paymentResult);
+        console.error('❌ Dados do PIX não encontrados');
+        pixQrCodeContainer.innerHTML = 'Não foi possível obter os dados do PIX.';
+        pixCodeText.value = 'Tente novamente.';
     }
     
+    // Iniciar timer
     startPixTimer();
 }
 
-// Gerar QR Code
-function generateQRCode(pixCode) {
-    const container = document.getElementById('qrcodeContainer');
-    container.innerHTML = '';
-    
-    if (typeof QRCode === 'undefined') {
-        console.error('Biblioteca QRCode não carregada');
-        container.innerHTML = '<p style="color: red;">Erro ao carregar biblioteca de QR Code</p>';
-        return;
-    }
-    
-    QRCode.toCanvas(pixCode, {
-        width: 256,
-        margin: 2,
-        color: {
-            dark: '#000000',
-            light: '#FFFFFF'
-        }
-    }, function (error, canvas) {
-        if (error) {
-            console.error('Erro ao gerar QR Code:', error);
-            container.innerHTML = '<p style="color: red;">Erro ao gerar QR Code</p>';
-        } else {
-            container.appendChild(canvas);
-            console.log("✅ QR Code renderizado com sucesso");
-        }
-    });
-}
+// ============================================
+// TIMER DO PIX
+// ============================================
 
-// Iniciar timer do Pix
 function startPixTimer() {
-    timeRemaining = 900;
+    timeRemaining = 900; // Reset para 15 minutos
     const timerElement = document.getElementById('pixTimer');
     
     if (pixTimer) {
@@ -409,7 +422,10 @@ function startPixTimer() {
     }, 1000);
 }
 
-// Copiar código Pix
+// ============================================
+// COPIAR CÓDIGO PIX
+// ============================================
+
 function copyPixCode() {
     const pixCodeInput = document.getElementById('pixCode');
     pixCodeInput.select();
@@ -423,7 +439,10 @@ function copyPixCode() {
     });
 }
 
-// Voltar ao formulário
+// ============================================
+// VOLTAR AO FORMULÁRIO
+// ============================================
+
 function backToForm() {
     if (pixTimer) {
         clearInterval(pixTimer);
@@ -432,7 +451,10 @@ function backToForm() {
     document.getElementById('formScreen').style.display = 'flex';
 }
 
-// Submissão do formulário
+// ============================================
+// SUBMISSÃO DO FORMULÁRIO
+// ============================================
+
 async function handleSubmit(e) {
     e.preventDefault();
     
@@ -448,68 +470,56 @@ async function handleSubmit(e) {
         phone: document.getElementById('phone').value
     };
     
-    const loadingOverlay = document.getElementById('loadingOverlay');
-    const submitBtn = document.getElementById('submitBtn');
+    const submitBtn = document.querySelector('button[type="submit"]');
     submitBtn.disabled = true;
-    loadingOverlay.style.display = 'flex';
+    submitBtn.textContent = 'Processando...';
     
     try {
-        console.log("⏳ Processando pagamento...");
-        const result = await processPixPayment(formData);
+        const paymentResult = await processPixPayment(formData);
         
-        if (result && result.pix && result.pix.qrcode) {
-            showPixPaymentDetails(result);
-            
-            document.getElementById('formScreen').style.display = 'none';
-            document.getElementById('pixScreen').style.display = 'flex';
-            
-            showToast('QR Code gerado com sucesso!', 'success');
-            console.log("✅ Checkout concluído com sucesso");
-        } else {
-            throw new Error('Dados do Pix não retornados pela API');
-        }
+        // Ocultar formulário e mostrar tela de Pix
+        document.getElementById('formScreen').style.display = 'none';
+        document.getElementById('pixScreen').style.display = 'flex';
+        
+        // Exibir detalhes do pagamento
+        showPixPaymentDetails(paymentResult);
+        
     } catch (error) {
-        console.error('Erro ao gerar Pix:', error);
+        console.error('❌ Erro ao gerar Pix:', error);
         showToast(error.message || 'Erro ao processar pagamento. Tente novamente.', 'error');
     } finally {
-        loadingOverlay.style.display = 'none';
         submitBtn.disabled = false;
+        submitBtn.textContent = 'Gerar QR Code Pix';
     }
 }
 
-// Inicialização
-document.addEventListener('DOMContentLoaded', function() {
-    console.log("🚀 Inicializando checkout");
-    
-    const cpfInput = document.getElementById('cpf');
-    const phoneInput = document.getElementById('phone');
-    
-    if (cpfInput) {
-        cpfInput.addEventListener('input', function(e) {
-            e.target.value = formatCPF(e.target.value);
-        });
-    }
-    
-    if (phoneInput) {
-        phoneInput.addEventListener('input', function(e) {
-            e.target.value = formatPhone(e.target.value);
-        });
-    }
-    
-    const inputs = document.querySelectorAll('input[required]');
-    inputs.forEach(input => {
-        input.addEventListener('blur', () => validateField(input));
-        input.addEventListener('input', () => {
-            if (input.classList.contains('error')) {
-                validateField(input);
-            }
-        });
+// ============================================
+// INICIALIZAÇÃO
+// ============================================
+
+document.addEventListener('DOMContentLoaded', () => {
+    // Adicionar listeners para máscaras
+    document.getElementById('cpf')?.addEventListener('input', (e) => {
+        e.target.value = formatCPF(e.target.value);
     });
     
-    const form = document.getElementById('checkoutForm');
+    document.getElementById('phone')?.addEventListener('input', (e) => {
+        e.target.value = formatPhone(e.target.value);
+    });
+    
+    // Adicionar listener para validação em tempo real
+    ['fullName', 'email', 'cpf', 'phone'].forEach(fieldId => {
+        const field = document.getElementById(fieldId);
+        if (field) {
+            field.addEventListener('blur', () => validateField(field));
+        }
+    });
+    
+    // Adicionar listener para submissão do formulário
+    const form = document.querySelector('form');
     if (form) {
         form.addEventListener('submit', handleSubmit);
     }
     
-    console.log("✅ Checkout inicializado com sucesso");
+    console.log('✅ Aplicação inicializada com sucesso');
 });
