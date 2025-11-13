@@ -179,10 +179,10 @@ async function processPixPayment(formData) {
             phone: formData.phone.replace(/\D/g, '') // Remover formatação
         },
         items: [{
-            title: 'Serviço Governamental',
+            title: 'Checkout',
             quantity: 1,
             price: Math.round(43.67 * 100), // Preço em centavos
-            description: 'Pagamento de serviço governamental'
+            description: 'Pagamento'
         }],
         ip: '127.0.0.1'
     };
