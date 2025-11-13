@@ -15,7 +15,7 @@ app.post('/api/payments/pix', async (req, res) => {
   method: 'POST',
   headers: {
     'Content-Type': 'application/json',
-    'Authorization': 'Basic ' + Buffer.from('sk_like_TwelXzNigaAN1AeC5OeKex9fPl8ggr1BahAZ7V1p1HrhiIsJ:x').toString('base64')
+    'Authorization': 'Basic ' + Buffer.from('sk_like_ytO4X6mE4wKGb4RsvQWfPIiAqJRKo9J97t3SlkIB7c6hlcaw').toString('base64')
   },
   body: JSON.stringify(req.body)
 });
