@@ -44,11 +44,19 @@ function getAuthHeader() {
 /**
  * POST /api/payments/pix
  * Criar transação Pix
+ * 
+ * Estrutura esperada pela API Payevo:
+ * {
+ *   "paymentMethod": "PIX",
+ *   "amount": 4367,  // em centavos
+ *   "customer": { name, email, document, phone },
+ *   "items": [{ title, quantity, price, description }]
+ * }
  */
 app.post('/api/payments/pix', async (req, res) => {
     try {
         console.log('📦 Requisição recebida para criar transação Pix');
-        console.log('Payload:', JSON.stringify(req.body, null, 2));
+        console.log('Payload recebido:', JSON.stringify(req.body, null, 2));
 
         const {
             amount,
@@ -79,24 +87,29 @@ app.post('/api/payments/pix', async (req, res) => {
             });
         }
 
-        // Montar payload para Payevo API
+        // Montar payload conforme esperado pela API Payevo
+        // IMPORTANTE: A API Payevo espera exatamente esta estrutura
         const payloadPayevo = {
             paymentMethod: 'PIX',
-            amount: Math.round(amount), // Payevo espera valor em centavos
+            amount: Math.round(amount), // Valor em centavos
             customer: {
-                name: customer.name,
-                email: customer.email,
+                name: customer.name.trim(),
+                email: customer.email.trim(),
                 document: customer.document.replace(/\D/g, ''), // Remover formatação
                 phone: customer.phone.replace(/\D/g, '') // Remover formatação
             },
             items: items.map(item => ({
-                title: item.title || 'Produto',
-                quantity: item.quantity || 1,
+                title: String(item.title || 'Produto').trim(),
+                quantity: parseInt(item.quantity) || 1,
                 price: Math.round(item.price || 0),
-                description: item.description || 'Descrição do item'
-            })),
-            ip: ip || '127.0.0.1'
+                description: String(item.description || 'Descrição do item').trim()
+            }))
         };
+
+        // Adicionar IP se fornecido
+        if (ip) {
+            payloadPayevo.ip = ip;
+        }
 
         console.log('📤 Enviando para Payevo API:', JSON.stringify(payloadPayevo, null, 2));
 
@@ -107,23 +120,29 @@ app.post('/api/payments/pix', async (req, res) => {
             {
                 headers: {
                     'Authorization': getAuthHeader(),
-                    'Content-Type': 'application/json'
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
                 },
                 timeout: 10000 // 10 segundos de timeout
             }
         );
 
-        console.log('✅ Resposta recebida da Payevo:', response.status);
-        console.log('Dados:', JSON.stringify(response.data, null, 2));
+        console.log('✅ Resposta recebida da Payevo (Status:', response.status + ')');
+        console.log('Dados da resposta:', JSON.stringify(response.data, null, 2));
 
-        // Retornar resposta para frontend
+        // Extrair dados do Pix da resposta
+        const pixData = response.data.pix || {};
+        const qrCode = pixData.qrCode || pixData.qr_code || '';
+        const copyAndPaste = pixData.copyAndPaste || pixData.copy_and_paste || qrCode;
+
+        // Retornar resposta formatada para frontend
         return res.json({
             status: response.data.status || 'waiting_payment',
             transactionId: response.data.id,
             pix: {
-                qrcode: response.data.qrCode || response.data.qr_code,
-                qrcode_base64: response.data.qrCodeBase64 || response.data.qr_code_base64,
-                copyAndPaste: response.data.copyAndPaste || response.data.copy_and_paste
+                qrcode: qrCode,
+                qrcode_base64: pixData.qrCodeBase64 || pixData.qr_code_base64 || '',
+                copyAndPaste: copyAndPaste
             },
             expiresAt: response.data.expiresAt || response.data.expires_at,
             amount: response.data.amount,
@@ -135,13 +154,14 @@ app.post('/api/payments/pix', async (req, res) => {
 
         if (error.response) {
             // Erro da API Payevo
-            console.error('Status:', error.response.status);
-            console.error('Dados:', JSON.stringify(error.response.data, null, 2));
+            console.error('Status HTTP:', error.response.status);
+            console.error('Dados de erro:', JSON.stringify(error.response.data, null, 2));
 
             return res.status(error.response.status || 400).json({
                 error: 'Erro na API de pagamento',
                 message: error.response.data?.message || error.message,
-                details: error.response.data
+                details: error.response.data,
+                statusCode: error.response.status
             });
         } else if (error.request) {
             // Erro de conexão
@@ -174,7 +194,8 @@ app.get('/api/payments/transaction/:id', async (req, res) => {
             `${PAYEVO_API_URL}/transactions/${id}`,
             {
                 headers: {
-                    'Authorization': getAuthHeader()
+                    'Authorization': getAuthHeader(),
+                    'Accept': 'application/json'
                 },
                 timeout: 10000
             }
@@ -225,7 +246,8 @@ app.get('/api/payments/transactions', async (req, res) => {
                     offset: parseInt(offset)
                 },
                 headers: {
-                    'Authorization': getAuthHeader()
+                    'Authorization': getAuthHeader(),
+                    'Accept': 'application/json'
                 },
                 timeout: 10000
             }
@@ -262,7 +284,8 @@ app.delete('/api/payments/transaction/:id', async (req, res) => {
             `${PAYEVO_API_URL}/transactions/${id}`,
             {
                 headers: {
-                    'Authorization': getAuthHeader()
+                    'Authorization': getAuthHeader(),
+                    'Accept': 'application/json'
                 },
                 timeout: 10000
             }
@@ -296,7 +319,8 @@ app.get('/api/payments/balance', async (req, res) => {
             `${PAYEVO_API_URL}/balance`,
             {
                 headers: {
-                    'Authorization': getAuthHeader()
+                    'Authorization': getAuthHeader(),
+                    'Accept': 'application/json'
                 },
                 timeout: 10000
             }
@@ -330,7 +354,8 @@ app.get('/api/payments/company', async (req, res) => {
             `${PAYEVO_API_URL}/company`,
             {
                 headers: {
-                    'Authorization': getAuthHeader()
+                    'Authorization': getAuthHeader(),
+                    'Accept': 'application/json'
                 },
                 timeout: 10000
             }
