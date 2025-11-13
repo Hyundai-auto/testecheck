@@ -1,10 +1,11 @@
 // Configuração da API de pagamento com proxy reverso
-// CORREÇÃO CORS: Usar proxy reverso em vez de chamar diretamente a API externa
-const BACKEND_API_BASE_URL = '/api/payments'; // Proxy reverso configurado no servidor
+// O proxy reverso em server.js encaminha para a API Payevo
+const BACKEND_API_BASE_URL = '/api/payments'; // Proxy reverso no seu servidor
 
 // Estado da aplicação
 let pixTimer = null;
 let timeRemaining = 900; // 15 minutos em segundos
+let currentTransactionId = null;
 
 // Máscaras de formatação
 function formatCPF(value) {
@@ -154,33 +155,44 @@ function validateForm() {
     return isFullNameValid && isEmailValid && isCPFValid && isPhoneValid;
 }
 
-// Processar pagamento Pix com proxy reverso
+/**
+ * Processar pagamento Pix com Payevo API via proxy reverso
+ * 
+ * Fluxo:
+ * 1. Frontend envia dados para /api/payments/pix
+ * 2. Proxy reverso (server.js) encaminha para Payevo API
+ * 3. Payevo retorna QR Code e dados do Pix
+ * 4. Frontend exibe QR Code e código copia e cola
+ */
 async function processPixPayment(formData) {
-    console.log("processPixPayment chamado com formData:", formData);
+    console.log("🔄 Iniciando processamento de pagamento Pix");
+    console.log("Dados do formulário:", formData);
 
+    // Preparar payload conforme esperado pela API Payevo
     const pixData = {
         paymentMethod: 'PIX',
-        amount: Math.round(43.67 * 100), // Valor em centavos
+        amount: Math.round(43.67 * 100), // Valor em centavos (4367 = R$ 43,67)
         customer: {
             name: formData.fullName,
             email: formData.email,
-            document: formData.cpf.replace(/\D/g, ''),
-            phone: formData.phone.replace(/\D/g, '')
+            document: formData.cpf.replace(/\D/g, ''), // Remover formatação
+            phone: formData.phone.replace(/\D/g, '') // Remover formatação
         },
         items: [{
-            title: String('Serviço Governamental'), // ✅ obrigatório
+            title: 'Serviço Governamental',
             quantity: 1,
-            price: Math.round(43.67 * 100),
-            description: String('Pagamento de serviço') // ✅ obrigatório
+            price: Math.round(43.67 * 100), // Preço em centavos
+            description: 'Pagamento de serviço governamental'
         }],
         ip: '127.0.0.1'
     };
 
     // Log completo no console para depuração
-    console.log("📦 Payload final enviado:", JSON.stringify(pixData, null, 2));
+    console.log("📦 Payload enviado para proxy reverso:", JSON.stringify(pixData, null, 2));
 
     try {
-        // CORREÇÃO CORS: Usar proxy reverso
+        // Enviar para proxy reverso (server.js)
+        // O proxy reverso encaminha para: https://apiv2.payevo.com.br/functions/v1/transactions
         const response = await fetch(`${BACKEND_API_BASE_URL}/pix`, {
             method: 'POST',
             headers: {
@@ -190,44 +202,54 @@ async function processPixPayment(formData) {
         });
 
         const result = await response.json();
-        console.log("Resposta do proxy:", result);
+        console.log("📥 Resposta do proxy reverso:", result);
 
-        if (response.ok && (result.status === 'waiting_payment' || result.status === 'pending')) {
+        if (response.ok && result.pix && result.pix.qrcode) {
             // Sucesso: retornar os dados do Pix
+            currentTransactionId = result.transactionId;
+            console.log("✅ Transação criada com sucesso. ID:", currentTransactionId);
             return result;
         } else {
-            console.error('⚠️ Resposta recebida, mas status inesperado:', result.status);
-            throw new Error(result.message || 'Erro ao gerar PIX');
+            console.error('⚠️ Resposta inesperada:', result);
+            throw new Error(result.error || result.message || 'Erro ao gerar PIX');
         }
     } catch (error) {
-        console.error('Erro PIX:', error);
-
-        if (error.message.includes('fetch') || error.message.includes('Failed to fetch')) {
-            console.log('Simulando resposta PIX para demonstração...');
-            return simulatePixPayment();
-        } else {
-            throw new Error('Erro ao processar pagamento PIX. Tente novamente.');
-        }
+        console.error('❌ Erro ao processar pagamento Pix:', error);
+        throw new Error('Erro ao processar pagamento. Tente novamente.');
     }
 }
 
-// Simular pagamento Pix (para demonstração)
-function simulatePixPayment() {
-    const randomId = Math.random().toString(36).substring(7);
-    const qrCode = `00020126580014br.gov.bcb.pix0136${randomId}520400005303986540543.675802BR5925CHECKOUT GOVERNAMENTAL6009SAO PAULO62070503***63041D3D`;
-    
-    return {
-        status: 'waiting_payment',
-        pix: {
-            qrcode: qrCode,
-            qrcode_base64: ''
-        }
-    };
+/**
+ * Buscar status da transação
+ */
+async function checkTransactionStatus() {
+    if (!currentTransactionId) {
+        console.warn('Nenhuma transação ativa');
+        return null;
+    }
+
+    try {
+        console.log(`🔍 Verificando status da transação: ${currentTransactionId}`);
+
+        const response = await fetch(`${BACKEND_API_BASE_URL}/transaction/${currentTransactionId}`, {
+            method: 'GET',
+            headers: {
+                'Content-Type': 'application/json',
+            }
+        });
+
+        const result = await response.json();
+        console.log("Status da transação:", result.status);
+        return result;
+    } catch (error) {
+        console.error('Erro ao verificar status:', error);
+        return null;
+    }
 }
 
 // Exibir detalhes do pagamento Pix
 function showPixPaymentDetails(paymentResult) {
-    console.log("showPixPaymentDetails chamado com:", paymentResult);
+    console.log("📊 Exibindo detalhes do pagamento Pix");
     
     const pixCodeText = document.getElementById('pixCode');
     const pixQrCodeContainer = document.getElementById('qrcodeContainer');
@@ -238,11 +260,19 @@ function showPixPaymentDetails(paymentResult) {
         
         // 1. Exibe o código "Copia e Cola"
         pixCodeText.value = pixCode;
+        console.log("✅ Código Pix copia e cola exibido");
         
         // 2. Gera o QR Code visual
         generateQRCode(pixCode);
+        console.log("✅ QR Code gerado");
         
-        console.log("✅ PIX exibido com sucesso");
+        // 3. Exibir informações adicionais se disponíveis
+        if (paymentResult.amount) {
+            const amountElement = document.querySelector('.pix-amount');
+            if (amountElement) {
+                amountElement.textContent = `R$ ${(paymentResult.amount / 100).toFixed(2).replace('.', ',')}`;
+            }
+        }
     } else {
         // Tratamento de erro caso os dados do PIX não sejam encontrados
         pixQrCodeContainer.innerHTML = "Não foi possível obter os dados do PIX.";
@@ -254,10 +284,17 @@ function showPixPaymentDetails(paymentResult) {
     startPixTimer();
 }
 
-// Gerar QR Code
+// Gerar QR Code usando biblioteca qrcode.react
 function generateQRCode(pixCode) {
     const container = document.getElementById('qrcodeContainer');
     container.innerHTML = ''; // Limpar QR Code anterior
+    
+    // Verificar se a biblioteca QRCode está disponível
+    if (typeof QRCode === 'undefined') {
+        console.error('Biblioteca QRCode não carregada');
+        container.innerHTML = '<p style="color: red;">Erro ao carregar biblioteca de QR Code</p>';
+        return;
+    }
     
     QRCode.toCanvas(pixCode, {
         width: 256,
@@ -272,6 +309,7 @@ function generateQRCode(pixCode) {
             container.innerHTML = '<p style="color: red;">Erro ao gerar QR Code</p>';
         } else {
             container.appendChild(canvas);
+            console.log("✅ QR Code renderizado com sucesso");
         }
     });
 }
@@ -346,24 +384,21 @@ async function handleSubmit(e) {
     loadingOverlay.style.display = 'flex';
     
     try {
-        console.log("Iniciando processamento de pagamento Pix...");
+        console.log("⏳ Processando pagamento...");
         const result = await processPixPayment(formData);
         
-        if (result.status === 'waiting_payment' || result.status === 'pending') {
-            if (result.pix && result.pix.qrcode) {
-                // Exibir detalhes do Pix
-                showPixPaymentDetails(result);
-                
-                // Trocar telas
-                document.getElementById('formScreen').style.display = 'none';
-                document.getElementById('pixScreen').style.display = 'flex';
-                
-                showToast('QR Code gerado com sucesso!', 'success');
-            } else {
-                throw new Error('Dados do Pix não retornados pela API');
-            }
+        if (result && result.pix && result.pix.qrcode) {
+            // Exibir detalhes do Pix
+            showPixPaymentDetails(result);
+            
+            // Trocar telas
+            document.getElementById('formScreen').style.display = 'none';
+            document.getElementById('pixScreen').style.display = 'flex';
+            
+            showToast('QR Code gerado com sucesso!', 'success');
+            console.log("✅ Checkout concluído com sucesso");
         } else {
-            throw new Error(result.message || 'Erro ao gerar pagamento Pix');
+            throw new Error('Dados do Pix não retornados pela API');
         }
     } catch (error) {
         console.error('Erro ao gerar Pix:', error);
@@ -376,7 +411,7 @@ async function handleSubmit(e) {
 
 // Inicialização
 document.addEventListener('DOMContentLoaded', function() {
-    console.log("Inicializando checkout...");
+    console.log("🚀 Inicializando checkout");
     
     // Configurar máscaras
     const cpfInput = document.getElementById('cpf');
@@ -411,5 +446,5 @@ document.addEventListener('DOMContentLoaded', function() {
         form.addEventListener('submit', handleSubmit);
     }
     
-    console.log("Checkout inicializado com sucesso");
+    console.log("✅ Checkout inicializado com sucesso");
 });
