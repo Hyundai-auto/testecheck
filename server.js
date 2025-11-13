@@ -44,22 +44,6 @@ function getAuthHeader() {
 /**
  * POST /api/payments/pix
  * Criar transação Pix
- * 
- * Estrutura esperada pela API Payevo:
- * {
- *   "paymentMethod": "PIX",
- *   "amount": 4367,  // em centavos
- *   "customer": {
- *     "name": "João da Silva",
- *     "email": "joao@email.com",
- *     "document": {
- *       "type": "CPF",
- *       "number": "12345678909"
- *     },
- *     "phone": "11987654321"
- *   },
- *   "items": [{ title, quantity, price, description }]
- * }
  */
 app.post('/api/payments/pix', async (req, res) => {
     try {
@@ -106,18 +90,17 @@ app.post('/api/payments/pix', async (req, res) => {
         }
 
         // Montar payload conforme esperado pela API Payevo
-        // IMPORTANTE: A API Payevo espera document como objeto com type e number
         const payloadPayevo = {
             paymentMethod: 'PIX',
-            amount: Math.round(amount), // Valor em centavos
+            amount: Math.round(amount),
             customer: {
                 name: customer.name.trim(),
                 email: customer.email.trim(),
                 document: {
-                    type: 'CPF',  // ← IMPORTANTE: Payevo espera este campo
-                    number: documentNumber  // ← IMPORTANTE: number, não document
+                    type: 'CPF',
+                    number: documentNumber
                 },
-                phone: customer.phone.replace(/\D/g, '') // Remover formatação
+                phone: customer.phone.replace(/\D/g, '')
             },
             items: items.map(item => ({
                 title: String(item.title || 'Produto').trim(),
@@ -127,7 +110,6 @@ app.post('/api/payments/pix', async (req, res) => {
             }))
         };
 
-        // Adicionar IP se fornecido
         if (ip) {
             payloadPayevo.ip = ip;
         }
@@ -144,37 +126,87 @@ app.post('/api/payments/pix', async (req, res) => {
                     'Content-Type': 'application/json',
                     'Accept': 'application/json'
                 },
-                timeout: 10000 // 10 segundos de timeout
+                timeout: 10000
             }
         );
 
         console.log('✅ Resposta recebida da Payevo (Status:', response.status + ')');
-        console.log('Dados da resposta:', JSON.stringify(response.data, null, 2));
+        console.log('📋 Dados completos da resposta:');
+        console.log(JSON.stringify(response.data, null, 2));
+        
+        // DEBUG: Mostrar estrutura completa
+        console.log('\n🔍 ESTRUTURA DA RESPOSTA PAYEVO:');
+        console.log('Propriedades principais:', Object.keys(response.data));
+        
+        if (response.data.pix) {
+            console.log('Propriedades de response.data.pix:', Object.keys(response.data.pix));
+            console.log('Conteúdo de response.data.pix:', JSON.stringify(response.data.pix, null, 2));
+        }
 
         // Extrair dados do Pix da resposta
         const pixData = response.data.pix || {};
-        const qrCode = pixData.qrCode || pixData.qr_code || '';
-        const copyAndPaste = pixData.copyAndPaste || pixData.copy_and_paste || qrCode;
-
-        // Retornar resposta formatada para frontend
-        return res.json({
+        
+        console.log('\n🎯 DADOS EXTRAÍDOS:');
+        console.log('pixData:', JSON.stringify(pixData, null, 2));
+        
+        // Procurar por qualquer campo que contenha QR Code
+        let qrCode = null;
+        let copyAndPaste = null;
+        
+        // Tenta todos os nomes possíveis
+        const possibleQrNames = ['qrCode', 'qr_code', 'QRCode', 'QR_CODE', 'qrcode', 'brCode', 'br_code', 'BRCode'];
+        const possibleCopyNames = ['copyAndPaste', 'copy_and_paste', 'copiaECola', 'copia_e_cola'];
+        
+        for (const name of possibleQrNames) {
+            if (pixData[name]) {
+                qrCode = pixData[name];
+                console.log(`✅ QR Code encontrado em: pixData.${name}`);
+                break;
+            }
+        }
+        
+        for (const name of possibleCopyNames) {
+            if (pixData[name]) {
+                copyAndPaste = pixData[name];
+                console.log(`✅ Copy and Paste encontrado em: pixData.${name}`);
+                break;
+            }
+        }
+        
+        // Se não encontrou, usar o primeiro valor string que pareça um QR Code
+        if (!qrCode) {
+            for (const key in pixData) {
+                const value = pixData[key];
+                if (typeof value === 'string' && value.startsWith('00020126')) {
+                    qrCode = value;
+                    console.log(`✅ QR Code encontrado em: pixData.${key} (por padrão)`);
+                    break;
+                }
+            }
+        }
+        
+        console.log('\n📤 RESPOSTA PARA FRONTEND:');
+        const responseToFrontend = {
             status: response.data.status || 'waiting_payment',
             transactionId: response.data.id,
             pix: {
-                qrcode: qrCode,
+                qrcode: qrCode || '',
                 qrcode_base64: pixData.qrCodeBase64 || pixData.qr_code_base64 || '',
-                copyAndPaste: copyAndPaste
+                copyAndPaste: copyAndPaste || qrCode || ''
             },
             expiresAt: response.data.expiresAt || response.data.expires_at,
             amount: response.data.amount,
-            originalResponse: response.data // Para debug
-        });
+            originalResponse: response.data
+        };
+        
+        console.log(JSON.stringify(responseToFrontend, null, 2));
+
+        return res.json(responseToFrontend);
 
     } catch (error) {
         console.error('❌ Erro ao processar transação Pix:', error.message);
 
         if (error.response) {
-            // Erro da API Payevo
             console.error('Status HTTP:', error.response.status);
             console.error('Dados de erro:', JSON.stringify(error.response.data, null, 2));
 
@@ -185,14 +217,12 @@ app.post('/api/payments/pix', async (req, res) => {
                 statusCode: error.response.status
             });
         } else if (error.request) {
-            // Erro de conexão
             console.error('Sem resposta da API');
             return res.status(503).json({
                 error: 'Serviço indisponível',
                 message: 'Não foi possível conectar à API de pagamento. Tente novamente.'
             });
         } else {
-            // Erro geral
             return res.status(500).json({
                 error: 'Erro interno',
                 message: error.message
@@ -449,21 +479,14 @@ app.listen(PORT, () => {
     console.log(`
 ╔════════════════════════════════════════════════════════════╗
 ║                                                            ║
-║   🚀 Checkout - Payevo API Proxy            ║
+║   🚀 Checkout - Payevo API Proxy (DEBUG)    ║
 ║                                                            ║
 ║   Servidor rodando em: http://localhost:${PORT}
 ║   Ambiente: ${process.env.NODE_ENV || 'development'}
 ║   API Payevo: ${PAYEVO_API_URL}
 ║   Autenticação: ${PAYEVO_SECRET_KEY ? '✅ Configurada' : '❌ NÃO CONFIGURADA'}
 ║                                                            ║
-║   Endpoints disponíveis:                                  ║
-║   POST   /api/payments/pix                                ║
-║   GET    /api/payments/transaction/:id                    ║
-║   GET    /api/payments/transactions                       ║
-║   DELETE /api/payments/transaction/:id                    ║
-║   GET    /api/payments/balance                            ║
-║   GET    /api/payments/company                            ║
-║   GET    /health                                          ║
+║   ⚠️  MODO DEBUG ATIVADO - Logs detalhados habilitados    ║
 ║                                                            ║
 ╚════════════════════════════════════════════════════════════╝
     `);
