@@ -1,33 +1,435 @@
-const express = require('express');
-const fetch = require('node-fetch');
-const path = require('path');
+import express from 'express';
+import cors from 'cors';
+import axios from 'axios';
+import dotenv from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+// Carregar variáveis de ambiente
+dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const PAYEVO_API_URL = 'https://apiv2.payevo.com.br/functions/v1';
+const PAYEVO_SECRET_KEY = process.env.PAYEVO_SECRET_KEY;
 
-app.use(express.static(path.join(__dirname, 'public')));
+// Configurar __dirname para ES modules
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Middleware
+app.use(cors());
 app.use(express.json());
+app.use(express.static('public'));
 
+// Logging middleware
+app.use((req, res, next) => {
+    console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
+    next();
+});
 
+// Função auxiliar para criar header de autenticação Basic Auth
+function getAuthHeader() {
+    if (!PAYEVO_SECRET_KEY) {
+        throw new Error('PAYEVO_SECRET_KEY não configurada. Verifique as variáveis de ambiente.');
+    }
+    const encoded = Buffer.from(PAYEVO_SECRET_KEY).toString('base64');
+    return `Basic ${encoded}`;
+}
+
+// ============================================
+// ROTAS DE TRANSAÇÕES
+// ============================================
+
+/**
+ * POST /api/payments/pix
+ * Criar transação Pix
+ */
 app.post('/api/payments/pix', async (req, res) => {
-  try {
-    const response = await fetch('https://apiv2.payevo.com.br/functions/v1/transactions', {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-    'Authorization': 'Basic ' + Buffer.from('sk_like_ytO4X6mE4wKGb4RsvQWfPIiAqJRKo9J97t3SlkIB7c6hlcaw').toString('base64')
-  },
-  body: JSON.stringify(req.body)
+    try {
+        console.log('📦 Requisição recebida para criar transação Pix');
+        console.log('Payload:', JSON.stringify(req.body, null, 2));
+
+        const {
+            amount,
+            customer,
+            items,
+            ip
+        } = req.body;
+
+        // Validações básicas
+        if (!amount || amount <= 0) {
+            return res.status(400).json({
+                error: 'Valor inválido',
+                message: 'O campo "amount" é obrigatório e deve ser maior que 0'
+            });
+        }
+
+        if (!customer || !customer.name || !customer.email || !customer.document || !customer.phone) {
+            return res.status(400).json({
+                error: 'Dados do cliente incompletos',
+                message: 'Os campos name, email, document e phone são obrigatórios'
+            });
+        }
+
+        if (!items || items.length === 0) {
+            return res.status(400).json({
+                error: 'Itens obrigatórios',
+                message: 'Pelo menos um item é obrigatório'
+            });
+        }
+
+        // Montar payload para Payevo API
+        const payloadPayevo = {
+            paymentMethod: 'PIX',
+            amount: Math.round(amount), // Payevo espera valor em centavos
+            customer: {
+                name: customer.name,
+                email: customer.email,
+                document: customer.document.replace(/\D/g, ''), // Remover formatação
+                phone: customer.phone.replace(/\D/g, '') // Remover formatação
+            },
+            items: items.map(item => ({
+                title: item.title || 'Produto',
+                quantity: item.quantity || 1,
+                price: Math.round(item.price || 0),
+                description: item.description || 'Descrição do item'
+            })),
+            ip: ip || '127.0.0.1'
+        };
+
+        console.log('📤 Enviando para Payevo API:', JSON.stringify(payloadPayevo, null, 2));
+
+        // Fazer requisição para Payevo API
+        const response = await axios.post(
+            `${PAYEVO_API_URL}/transactions`,
+            payloadPayevo,
+            {
+                headers: {
+                    'Authorization': getAuthHeader(),
+                    'Content-Type': 'application/json'
+                },
+                timeout: 10000 // 10 segundos de timeout
+            }
+        );
+
+        console.log('✅ Resposta recebida da Payevo:', response.status);
+        console.log('Dados:', JSON.stringify(response.data, null, 2));
+
+        // Retornar resposta para frontend
+        return res.json({
+            status: response.data.status || 'waiting_payment',
+            transactionId: response.data.id,
+            pix: {
+                qrcode: response.data.qrCode || response.data.qr_code,
+                qrcode_base64: response.data.qrCodeBase64 || response.data.qr_code_base64,
+                copyAndPaste: response.data.copyAndPaste || response.data.copy_and_paste
+            },
+            expiresAt: response.data.expiresAt || response.data.expires_at,
+            amount: response.data.amount,
+            originalResponse: response.data // Para debug
+        });
+
+    } catch (error) {
+        console.error('❌ Erro ao processar transação Pix:', error.message);
+
+        if (error.response) {
+            // Erro da API Payevo
+            console.error('Status:', error.response.status);
+            console.error('Dados:', JSON.stringify(error.response.data, null, 2));
+
+            return res.status(error.response.status || 400).json({
+                error: 'Erro na API de pagamento',
+                message: error.response.data?.message || error.message,
+                details: error.response.data
+            });
+        } else if (error.request) {
+            // Erro de conexão
+            console.error('Sem resposta da API');
+            return res.status(503).json({
+                error: 'Serviço indisponível',
+                message: 'Não foi possível conectar à API de pagamento. Tente novamente.'
+            });
+        } else {
+            // Erro geral
+            return res.status(500).json({
+                error: 'Erro interno',
+                message: error.message
+            });
+        }
+    }
 });
 
-    const data = await response.json();
-    res.status(response.status).json(data);
-  } catch (err) {
-    console.error('Erro no proxy PIX:', err);
-    res.status(500).json({ message: 'Erro no servidor de pagamento PIX' });
-  }
+/**
+ * GET /api/payments/transaction/:id
+ * Buscar status de uma transação
+ */
+app.get('/api/payments/transaction/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        console.log(`🔍 Buscando transação: ${id}`);
+
+        const response = await axios.get(
+            `${PAYEVO_API_URL}/transactions/${id}`,
+            {
+                headers: {
+                    'Authorization': getAuthHeader()
+                },
+                timeout: 10000
+            }
+        );
+
+        console.log('✅ Transação encontrada:', response.data.status);
+
+        return res.json({
+            status: response.data.status,
+            transactionId: response.data.id,
+            amount: response.data.amount,
+            paidAt: response.data.paidAt,
+            originalResponse: response.data
+        });
+
+    } catch (error) {
+        console.error('❌ Erro ao buscar transação:', error.message);
+
+        if (error.response?.status === 404) {
+            return res.status(404).json({
+                error: 'Transação não encontrada',
+                message: 'A transação solicitada não existe'
+            });
+        }
+
+        return res.status(error.response?.status || 500).json({
+            error: 'Erro ao buscar transação',
+            message: error.message
+        });
+    }
 });
+
+/**
+ * GET /api/payments/transactions
+ * Listar transações
+ */
+app.get('/api/payments/transactions', async (req, res) => {
+    try {
+        const { limit = 10, offset = 0 } = req.query;
+
+        console.log(`📋 Listando transações (limit: ${limit}, offset: ${offset})`);
+
+        const response = await axios.get(
+            `${PAYEVO_API_URL}/transactions`,
+            {
+                params: {
+                    limit: parseInt(limit),
+                    offset: parseInt(offset)
+                },
+                headers: {
+                    'Authorization': getAuthHeader()
+                },
+                timeout: 10000
+            }
+        );
+
+        return res.json({
+            transactions: response.data.transactions || response.data,
+            total: response.data.total,
+            limit: parseInt(limit),
+            offset: parseInt(offset)
+        });
+
+    } catch (error) {
+        console.error('❌ Erro ao listar transações:', error.message);
+
+        return res.status(error.response?.status || 500).json({
+            error: 'Erro ao listar transações',
+            message: error.message
+        });
+    }
+});
+
+/**
+ * DELETE /api/payments/transaction/:id
+ * Estornar transação
+ */
+app.delete('/api/payments/transaction/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        console.log(`🔄 Estornando transação: ${id}`);
+
+        const response = await axios.delete(
+            `${PAYEVO_API_URL}/transactions/${id}`,
+            {
+                headers: {
+                    'Authorization': getAuthHeader()
+                },
+                timeout: 10000
+            }
+        );
+
+        return res.json({
+            status: 'refunded',
+            transactionId: response.data.id,
+            message: 'Transação estornada com sucesso'
+        });
+
+    } catch (error) {
+        console.error('❌ Erro ao estornar transação:', error.message);
+
+        return res.status(error.response?.status || 500).json({
+            error: 'Erro ao estornar transação',
+            message: error.message
+        });
+    }
+});
+
+/**
+ * GET /api/payments/balance
+ * Obter saldo da conta
+ */
+app.get('/api/payments/balance', async (req, res) => {
+    try {
+        console.log('💰 Buscando saldo da conta');
+
+        const response = await axios.get(
+            `${PAYEVO_API_URL}/balance`,
+            {
+                headers: {
+                    'Authorization': getAuthHeader()
+                },
+                timeout: 10000
+            }
+        );
+
+        return res.json({
+            balance: response.data.balance,
+            reserved: response.data.reserved,
+            available: response.data.available
+        });
+
+    } catch (error) {
+        console.error('❌ Erro ao buscar saldo:', error.message);
+
+        return res.status(error.response?.status || 500).json({
+            error: 'Erro ao buscar saldo',
+            message: error.message
+        });
+    }
+});
+
+/**
+ * GET /api/payments/company
+ * Obter dados da empresa
+ */
+app.get('/api/payments/company', async (req, res) => {
+    try {
+        console.log('🏢 Buscando dados da empresa');
+
+        const response = await axios.get(
+            `${PAYEVO_API_URL}/company`,
+            {
+                headers: {
+                    'Authorization': getAuthHeader()
+                },
+                timeout: 10000
+            }
+        );
+
+        return res.json(response.data);
+
+    } catch (error) {
+        console.error('❌ Erro ao buscar dados da empresa:', error.message);
+
+        return res.status(error.response?.status || 500).json({
+            error: 'Erro ao buscar dados da empresa',
+            message: error.message
+        });
+    }
+});
+
+// ============================================
+// ROTAS DE HEALTH CHECK
+// ============================================
+
+/**
+ * GET /health
+ * Health check
+ */
+app.get('/health', (req, res) => {
+    res.json({
+        status: 'ok',
+        timestamp: new Date().toISOString(),
+        payevoConfigured: !!PAYEVO_SECRET_KEY
+    });
+});
+
+/**
+ * GET /
+ * Servir HTML do checkout
+ */
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'checkout-standalone.html'));
+});
+
+// ============================================
+// TRATAMENTO DE ERROS
+// ============================================
+
+// 404 handler
+app.use((req, res) => {
+    res.status(404).json({
+        error: 'Rota não encontrada',
+        path: req.path,
+        method: req.method
+    });
+});
+
+// Error handler
+app.use((err, req, res, next) => {
+    console.error('❌ Erro não tratado:', err);
+
+    res.status(err.status || 500).json({
+        error: 'Erro interno do servidor',
+        message: process.env.NODE_ENV === 'development' ? err.message : 'Erro ao processar requisição'
+    });
+});
+
+// ============================================
+// INICIAR SERVIDOR
+// ============================================
 
 app.listen(PORT, () => {
-  console.log(`Servidor rodando na porta ${PORT}`);
+    console.log(`
+╔════════════════════════════════════════════════════════════╗
+║                                                            ║
+║   🚀 Checkout Governamental - Payevo API Proxy            ║
+║                                                            ║
+║   Servidor rodando em: http://localhost:${PORT}
+║   Ambiente: ${process.env.NODE_ENV || 'development'}
+║   API Payevo: ${PAYEVO_API_URL}
+║   Autenticação: ${PAYEVO_SECRET_KEY ? '✅ Configurada' : '❌ NÃO CONFIGURADA'}
+║                                                            ║
+║   Endpoints disponíveis:                                  ║
+║   POST   /api/payments/pix                                ║
+║   GET    /api/payments/transaction/:id                    ║
+║   GET    /api/payments/transactions                       ║
+║   DELETE /api/payments/transaction/:id                    ║
+║   GET    /api/payments/balance                            ║
+║   GET    /api/payments/company                            ║
+║   GET    /health                                          ║
+║                                                            ║
+╚════════════════════════════════════════════════════════════╝
+    `);
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+    console.log('SIGTERM recebido. Encerrando servidor...');
+    process.exit(0);
+});
+
+process.on('SIGINT', () => {
+    console.log('SIGINT recebido. Encerrando servidor...');
+    process.exit(0);
 });
